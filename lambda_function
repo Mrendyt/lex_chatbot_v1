@@ -1,0 +1,121 @@
+# Main Lambda entry point
+def lambda_handler(event, context):
+    # Extract variables from the event object
+    slots = event['sessionState']['intent']['slots']
+    session_attributes = event.get('sessionState', {}).get('sessionAttributes', {}) or {}
+    user_input = event.get("inputTranscript", "").strip().lower()
+    intent_name = event['sessionState']['intent']['name']
+    answer = slots.get("answerSlot", {}).get("value", {}).get("interpretedValue") if slots.get("answerSlot") else None
+
+    # Load all quiz questions
+    quiz = get_quiz_questions()
+    total = len(quiz)
+
+    # Track quiz state (current question index and score)
+    index = int(session_attributes.get("index", 0))
+    score = int(session_attributes.get("score", 0))
+
+    # If user types "retry", restart the quiz
+    if user_input == "retry":
+        return ask_question(0, 0, intent_name, "Let's start again!")
+
+    # If user types "next", skip to the next question
+    if user_input == "next":
+        return ask_question(index + 1, score, intent_name, "No problem, let's skip that one.")
+
+    # If the user submitted an answer
+    if answer:
+        # Validate that answer is one of a, b, or c
+        if answer.lower() not in ["a", "b", "c"]:
+            return elicit_answer_again(index, intent_name, "Please choose a, b, or c (You can type 'next' to skip question)")
+
+        correct = quiz[index]["answer"]
+        feedback = "Correct!" if answer.lower() == correct else f"Incorrect. The correct answer is ({correct})."
+
+        # Update score if the answer was correct
+        score += 1 if answer.lower() == correct else 0
+        index += 1  # Move to next question
+
+        # If all questions have been asked, end the quiz
+        if index >= total:
+            return end_quiz(intent_name, score, total, feedback)
+
+        # Ask next question
+        return ask_question(index, score, intent_name, feedback)
+
+    # If no answer yet, prompt current question
+    return ask_question(index, score, intent_name)
+
+# Returns the list of quiz questions
+def get_quiz_questions():
+    return [
+        {"question": "What does S3 stand for?", "options": "(a) Simple Storage Service (b) Secure Server Storage (c) Smart Storage System", "answer": "a"},
+        {"question": "What is EC2?", "options": "(a) A storage service (b) A virtual server (c) A database", "answer": "b"},
+        {"question": "What is the purpose of IAM?", "options": "(a) User management (b) Logging (c) Encryption", "answer": "a"},
+        {"question": "What does RDS stand for?", "options": "(a) Relational Database Service (b) Remote Data Storage (c) Reliable Data Service", "answer": "a"},
+        {"question": "Which service is used for scalable DNS?", "options": "(a) S3 (b) Route 53 (c) CloudWatch", "answer": "b"},
+        {"question": "What is Amazon S3 mainly used for?", "options": "(a) Cloud storage (b) Web hosting (c) Cloud computing", "answer": "a"},
+        {"question": "What is the purpose of a CloudFront distribution?", "options": "(a) Cloud computing (b) Web hosting (c) Content delivery", "answer": "c"},
+        {"question": "What is AWS Lambda used for?", "options": "(a) Hosting websites (b) Running code without servers (c) Storing files", "answer": "b"},
+        {"question": "What is CloudWatch used for?", "options": "(a) Monitoring resources (b) File transfer (c) Encryption", "answer": "a"},
+        {"question": "What is the purpose of a load balancer?", "options": "(a) Distributing traffic (b) Encrypting data (c) Monitoring resources", "answer": "a"},
+        {"question": "What is the purpose of a VPC?", "options": "(a) Virtual Public Cloud (b) Virtual Private Cloud (c) Virtual Private Network", "answer": "b"}
+    ]
+
+# Prompt the user to re-enter an answer
+def elicit_answer_again(index, intent_name, message):
+    return {
+        "sessionState": {
+            "dialogAction": {"type": "ElicitSlot", "slotToElicit": "answerSlot"},
+            "intent": {
+                "name": intent_name,
+                "slots": {"answerSlot": None},
+                "state": "InProgress"
+            },
+            "sessionAttributes": {
+                "index": str(index)
+            }
+        },
+        "messages": [{"contentType": "PlainText", "content": message}]
+    }
+
+
+# End the quiz and show final score
+def end_quiz(intent_name, score, total, message=None):
+    ending = f"🎉 {message or ''} You've completed the quiz! Your final score is {score}/{total}. Type 'retry' to try again or 'exit' to leave the Quiz."
+    return {
+        "sessionState": {
+            "dialogAction": {"type": "Close"},
+            "intent": {"name": intent_name, "state": "Fulfilled"},
+        },
+        "messages": [{"contentType": "PlainText", "content": ending.strip()}]
+    }
+
+
+# Ask the next question
+def ask_question(index, score, intent_name, message=None):
+    quiz = get_quiz_questions()
+
+    # If no more questions left, end the quiz
+    if index >= len(quiz):
+        return end_quiz(intent_name, score, len(quiz), message)
+
+    # Get current question
+    q = quiz[index]
+    question_text = f"{index + 1} of {len(quiz)}: {q['question']} {q['options']} You can type 'next' to skip this question."
+
+    return {
+        "sessionState": {
+            "dialogAction": {"type": "ElicitSlot", "slotToElicit": "answerSlot"},
+            "intent": {
+                "name": intent_name,
+                "slots": {"answerSlot": None},
+                "state": "InProgress"
+            },
+            "sessionAttributes": {
+                "index": str(index),
+                "score": str(score)
+            }
+        },
+        "messages": [{"contentType": "PlainText", "content": f"{message + ' ' if message else ''}{question_text}"}]
+    }
